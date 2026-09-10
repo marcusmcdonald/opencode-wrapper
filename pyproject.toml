@@ -1,0 +1,17 @@
+[project]
+name = "opencode-wrapper"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Add opencode-specific dependencies here
+    "spython>=0.3.14",
+]
+[project.scripts]
+opencode = "opencode_wrapper:main"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.21",
+]
