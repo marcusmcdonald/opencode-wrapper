@@ -120,9 +120,33 @@ If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is
 
 ## Development
 
+Install development dependencies:
+
 ```bash
 uv sync --group dev   # installs ruff and pre-commit
-uv run ruff check     # run linting
+```
+
+### Pre-commit hooks
+
+Install the git hooks into the repository:
+
+```bash
+uv run pre-commit install
+```
+
+Once installed, hooks will run automatically on staged files whenever you run `git commit`.
+
+To manually run hooks against all files:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+### Linting & Formatting
+
+```bash
+uv run ruff check     # check for lint errors
+uv run ruff format    # check / apply formatting
 ```
 
 ## License
