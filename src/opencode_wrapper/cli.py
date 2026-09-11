@@ -10,12 +10,44 @@ from pathlib import Path
 
 WRAPPER_VERSION = "1.1.0"
 
-DEFAULT_APPTAINER_IMAGE = Path(__file__).parent.resolve() / "opencode.sif"
+
+def _find_repo_or_data_root() -> Path:
+    env_dir = os.environ.get("OPENCODE_WRAPPER_ROOT")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+
+    # If installed in editable mode or running from git checkout
+    repo_candidate = Path(__file__).resolve().parents[2]
+    if (repo_candidate / "pyproject.toml").is_file():
+        return repo_candidate
+
+    return Path.home() / ".local" / "share" / "opencode-wrapper"
+
+
+def _find_default_apptainer_image() -> Path:
+    cwd_sif = Path.cwd() / "opencode.sif"
+    if cwd_sif.is_file():
+        return cwd_sif
+
+    repo_root = _find_repo_or_data_root()
+    repo_sif = repo_root / "opencode.sif"
+    if repo_sif.is_file():
+        return repo_sif
+
+    pkg_sif = Path(__file__).resolve().parent / "opencode.sif"
+    if pkg_sif.is_file():
+        return pkg_sif
+
+    return repo_sif
+
+
+_ROOT_DIR = _find_repo_or_data_root()
+DEFAULT_APPTAINER_IMAGE = _find_default_apptainer_image()
 DEFAULT_PODMAN_IMAGE = "opencode:latest"
 
-DEFAULT_HOST_CONFIG_DIR = Path(__file__).parent.resolve() / "config" / "opencode"
+DEFAULT_HOST_CONFIG_DIR = _ROOT_DIR / "config" / "opencode"
 DEFAULT_HOST_DATA_DIR = (
-    Path(__file__).parent.resolve() / "config" / ".local" / "share" / "opencode"
+    _ROOT_DIR / "config" / ".local" / "share" / "opencode"
 )
 
 CONTAINER_PROJECT_DIR = "/workspace/project"

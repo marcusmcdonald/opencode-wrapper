@@ -1,14 +1,52 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-DEFAULT_DOCKERFILE = Path(__file__).parent.resolve() / "Dockerfile"
-DEFAULT_SIF_PATH = Path(__file__).parent.resolve() / "opencode.sif"
+
+def _find_repo_or_data_root() -> Path:
+    env_dir = os.environ.get("OPENCODE_WRAPPER_ROOT")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+
+    repo_candidate = Path(__file__).resolve().parents[2]
+    if (repo_candidate / "pyproject.toml").is_file():
+        return repo_candidate
+
+    return Path.home() / ".local" / "share" / "opencode-wrapper"
+
+
+def _find_default_dockerfile() -> Path:
+    pkg_df = Path(__file__).resolve().parent / "Dockerfile"
+    if pkg_df.is_file():
+        return pkg_df
+
+    repo_root = _find_repo_or_data_root()
+    repo_df = repo_root / "Dockerfile"
+    if repo_df.is_file():
+        return repo_df
+
+    cwd_df = Path.cwd() / "Dockerfile"
+    if cwd_df.is_file():
+        return cwd_df
+
+    return pkg_df
+
+
+def _find_default_sif_path() -> Path:
+    repo_root = _find_repo_or_data_root()
+    if (repo_root / "pyproject.toml").is_file():
+        return repo_root / "opencode.sif"
+    return Path.cwd() / "opencode.sif"
+
+
+DEFAULT_DOCKERFILE = _find_default_dockerfile()
+DEFAULT_SIF_PATH = _find_default_sif_path()
 DEFAULT_PODMAN_TAG = "opencode:latest"
 
 

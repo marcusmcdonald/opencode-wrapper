@@ -2,8 +2,29 @@
 
 Run [OpenCode](https://opencode.ai) inside an isolated container sandbox built from a single `Dockerfile`, with support for both **Apptainer** and **Podman**. The project provides two tools:
 
-- **`build_image.py`** — builds the container image (Apptainer `.sif` or Podman image) from the included `Dockerfile`.
-- **`opencode_wrapper.py`** — runs OpenCode inside that image, mounting your project and keeping configuration/data persistent on the host.
+- **`opencode`** (`opencode_wrapper.cli`) — runs OpenCode inside the container sandbox, mounting your project and keeping configuration/data persistent on the host.
+- **`opencode-build`** (`opencode_wrapper.build_image`) — builds the container image (Apptainer `.sif` or Podman image) from the included `Dockerfile`.
+
+## Installation
+
+Install as a global CLI tool using `uv tool`:
+
+```bash
+uv tool install -e .
+```
+
+This exposes `opencode` and `opencode-build` directly in your `PATH` (in `~/.local/bin`).
+
+Or install in editable mode in a local virtual environment:
+
+```bash
+uv sync               # sets up .venv and installs project in editable mode
+# or
+uv pip install -e .
+```
+
+> [!NOTE]
+> `pyproject.toml` maps the `opencode` entry point to the wrapper, shadowing any globally installed bare OpenCode binary.
 
 ## How it works
 
@@ -18,28 +39,32 @@ Because each sandbox keeps its configuration and data in an isolated host direct
 ## Requirements
 
 - Python 3.12+
+- Astral `uv`
 - **Apptainer** and/or **Podman** installed and in `PATH`
-- `spython` for Apptainer builds from Dockerfiles: `uv pip install spython` (declared in `pyproject.toml`)
+- `spython` for Apptainer builds from Dockerfiles (automatically installed as a dependency)
 
 ## Building the image
 
-`build_image.py` auto-detects the build engine (Podman is preferred when both are present).
+`opencode-build` auto-detects the build engine (Podman is preferred when both are present).
 
 ```bash
 # Auto-detect engine and build
-python build_image.py
+opencode-build
+
+# Or with uv run
+uv run opencode-build
 
 # Build to a specific SIF path (Apptainer)
-python build_image.py --engine apptainer -o opencode.sif
+opencode-build --engine apptainer -o opencode.sif
 
 # Build with Podman under a custom tag
-python build_image.py --engine podman -o opencode:latest
+opencode-build --engine podman -o opencode:latest
 
 # Disable build cache
-python build_image.py --no-cache
+opencode-build --no-cache
 ```
 
-Available options: `-e/--engine {auto,apptainer,podman}`, `-f/--file` (Dockerfile path, default `./Dockerfile`), `-o/--output` (`.sif` path for Apptainer, image tag for Podman), `--no-cache`.
+Available options: `-e/--engine {auto,apptainer,podman}`, `-f/--file` (Dockerfile path, default bundled `Dockerfile`), `-o/--output` (`.sif` path for Apptainer, image tag for Podman), `--no-cache`.
 
 Default outputs: `opencode.sif` (Apptainer) or `opencode:latest` (Podman tag).
 
@@ -47,18 +72,21 @@ Default outputs: `opencode.sif` (Apptainer) or `opencode:latest` (Podman tag).
 
 ```bash
 # Run in the current directory
-python opencode_wrapper.py
+opencode
+
+# Or with uv run
+uv run opencode
 
 # Run against a specific project directory, passing OpenCode args through
-python opencode_wrapper.py /path/to/myproject "do something"
+opencode /path/to/myproject "do something"
 
 # Force a specific engine
-python opencode_wrapper.py --engine apptainer
-python opencode_wrapper.py --engine podman
+opencode --engine apptainer
+opencode --engine podman
 
 # Use a specific image path or tag
-python opencode_wrapper.py --image ./opencode.sif
-python opencode_wrapper.py --image opencode:latest
+opencode --image ./opencode.sif
+opencode --image opencode:latest
 ```
 
 The engine is auto-detected: a `.sif`/`.simg` image (or any file path) selects Apptainer; an image tag selects Podman; otherwise the default image for the detected runtime is used.
@@ -69,16 +97,16 @@ Config and data live by default in `./config/opencode` and `./config/.local/shar
 
 ```bash
 # Copy an existing config file/dir into the sandbox before launching
-python opencode_wrapper.py --copy-config ~/.config/opencode/opencode.json
+opencode --copy-config ~/.config/opencode/opencode.json
 
 # Copy existing data (e.g. auth.json) into the sandbox
-python opencode_wrapper.py --copy-data ~/.local/share/opencode
+opencode --copy-data ~/.local/share/opencode
 
 # Start from a clean slate
-python opencode_wrapper.py --reset-config --reset-data
+opencode --reset-config --reset-data
 
 # Point the sandbox at custom host directories
-python opencode_wrapper.py --sandbox-config-dir /tmp/my-config --sandbox-data-dir /tmp/my-data
+opencode --sandbox-config-dir /tmp/my-config --sandbox-data-dir /tmp/my-data
 ```
 
 If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is created before launching. API keys (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`) and Wayland/X11 environment are passed through from the host when present.
@@ -90,18 +118,11 @@ If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is
 - `-v/--version` — show wrapper version and the OpenCode version from inside the container.
 - `-h/--help` — show wrapper help plus OpenCode's own `--help` from inside the container.
 
-## Installation
-
-```bash
-uv pip install -e .   # exposes the `opencode` console script
-```
-
-Note: `pyproject.toml` maps the `opencode` entry point to the wrapper, so it shadows any globally installed OpenCode binary.
-
 ## Development
 
 ```bash
 uv sync --group dev   # installs ruff and pre-commit
+uv run ruff check     # run linting
 ```
 
 ## License
