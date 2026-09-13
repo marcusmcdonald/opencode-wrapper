@@ -8,7 +8,7 @@ import sys
 from enum import IntEnum
 from pathlib import Path
 
-from dotenv import dotenv_values, load_dotenv
+from dotenv import dotenv_values
 
 WRAPPER_VERSION = "1.1.0"
 
@@ -48,9 +48,7 @@ DEFAULT_APPTAINER_IMAGE = _find_default_apptainer_image()
 DEFAULT_PODMAN_IMAGE = "opencode:latest"
 
 DEFAULT_HOST_CONFIG_DIR = _ROOT_DIR / "config" / "opencode"
-DEFAULT_HOST_DATA_DIR = (
-    _ROOT_DIR / "config" / ".local" / "share" / "opencode"
-)
+DEFAULT_HOST_DATA_DIR = _ROOT_DIR / "config" / ".local" / "share" / "opencode"
 
 CONTAINER_PROJECT_DIR = "/workspace/project"
 CONTAINER_CONFIG_DIR = "/workspace/opencode-config"
@@ -183,7 +181,10 @@ def install_kai(target_config_dir: Path) -> None:
     cmd = [
         "bash",
         "-c",
-        f"curl -fsSL {installer_url} | bash -s -- latest --yes --config-dir '{target_config_dir}'",
+        'curl -fsSL "$1" | bash -s -- latest --yes --config-dir "$2"',
+        "_",
+        installer_url,
+        str(target_config_dir),
     ]
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
@@ -197,9 +198,8 @@ def detect_engine(engine_arg: str, image_arg: str | None) -> str:
     if image_arg:
         if image_arg.endswith((".sif", ".simg")) or Path(image_arg).is_file():
             return "apptainer"
-        if ":" in image_arg or "/" in image_arg:
-            if shutil.which("podman"):
-                return "podman"
+        if (":" in image_arg or "/" in image_arg) and shutil.which("podman"):
+            return "podman"
 
     if DEFAULT_APPTAINER_IMAGE.is_file() and shutil.which("apptainer"):
         return "apptainer"
@@ -242,14 +242,16 @@ def _run_container_probe(engine: str, image: str, probe_args: list[str]) -> None
             CONTAINER_PROJECT_DIR,
             "--bind",
             f"{Path.cwd()}:{CONTAINER_PROJECT_DIR}:rw",
-            "--bind",
-            f"{DEFAULT_HOST_CONFIG_DIR}:{CONTAINER_CONFIG_DIR}:rw",
-            "--bind",
-            f"{DEFAULT_HOST_DATA_DIR}:{CONTAINER_DATA_HOME}/opencode:rw",
-            image,
-            "opencode",
-            *probe_args,
         ]
+        if DEFAULT_HOST_CONFIG_DIR.exists():
+            cmd.extend(
+                ["--bind", f"{DEFAULT_HOST_CONFIG_DIR}:{CONTAINER_CONFIG_DIR}:rw"]
+            )
+        if DEFAULT_HOST_DATA_DIR.exists():
+            cmd.extend(
+                ["--bind", f"{DEFAULT_HOST_DATA_DIR}:{CONTAINER_DATA_HOME}/opencode:rw"]
+            )
+        cmd.extend([image, "opencode", *probe_args])
     else:
         cmd = [
             "podman",
@@ -261,18 +263,18 @@ def _run_container_probe(engine: str, image: str, probe_args: list[str]) -> None
             CONTAINER_PROJECT_DIR,
             "-v",
             f"{Path.cwd()}:{CONTAINER_PROJECT_DIR}:rw",
-            "-v",
-            f"{DEFAULT_HOST_CONFIG_DIR}:{CONTAINER_CONFIG_DIR}:rw",
-            "-v",
-            f"{DEFAULT_HOST_DATA_DIR}:{CONTAINER_DATA_HOME}/opencode:rw",
-            image,
-            "opencode",
-            *probe_args,
         ]
+        if DEFAULT_HOST_CONFIG_DIR.exists():
+            cmd.extend(["-v", f"{DEFAULT_HOST_CONFIG_DIR}:{CONTAINER_CONFIG_DIR}:rw"])
+        if DEFAULT_HOST_DATA_DIR.exists():
+            cmd.extend(
+                ["-v", f"{DEFAULT_HOST_DATA_DIR}:{CONTAINER_DATA_HOME}/opencode:rw"]
+            )
+        cmd.extend([image, "opencode", *probe_args])
 
     try:
         subprocess.run(cmd, check=False)
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
 
 
@@ -301,9 +303,7 @@ def _looks_like_path(arg: str) -> bool:
         "/" in arg
         or "\\" in arg
         or arg in (".", "..")
-        or arg.startswith("~")
-        or arg.startswith("./")
-        or arg.startswith("../")
+        or arg.startswith(("~", "./", "../"))
     )
 
 
@@ -319,7 +319,9 @@ def parse_args() -> argparse.Namespace:
     if args.version:
         _print_version_and_exit(args.engine, args.image)
 
-    if unknown and _looks_like_path(unknown[0]):
+    if unknown and (
+        Path(unknown[0]).expanduser().is_dir() or _looks_like_path(unknown[0])
+    ):
         potential_path = Path(unknown[0]).expanduser().resolve()
         if not potential_path.exists():
             parser.error(f"Project directory does not exist: {potential_path}")
@@ -349,18 +351,6 @@ def resolve_env_file(
             raise ValueError("Environment file path cannot be empty.")
 
         path = resolve_path(trimmed)
-        if trimmed.endswith(("/", "\\")):
-            if not path.is_dir():
-                raise FileNotFoundError(
-                    f"Specified environment directory does not exist: {path}"
-                )
-            candidate = path / ".env"
-            if not candidate.is_file():
-                raise FileNotFoundError(
-                    f"Specified environment file does not exist: {candidate}"
-                )
-            return candidate
-
         if path.is_dir():
             candidate = path / ".env"
             if not candidate.is_file():
@@ -368,6 +358,11 @@ def resolve_env_file(
                     f"Specified environment file does not exist: {candidate}"
                 )
             return candidate
+
+        if trimmed.endswith(("/", "\\")):
+            raise FileNotFoundError(
+                f"Specified environment directory does not exist: {path}"
+            )
 
         if not path.is_file():
             raise FileNotFoundError(
@@ -409,6 +404,8 @@ def copy_into_directory(source_path_str: str, destination: Path) -> None:
     if not source.exists():
         raise FileNotFoundError(f"Source path does not exist: {source}")
 
+    destination.mkdir(parents=True, exist_ok=True)
+
     if source.is_dir():
         shutil.copytree(source, destination, dirs_exist_ok=True)
     else:
@@ -429,18 +426,32 @@ def find_config_file(config_dir: Path) -> Path | None:
     return None
 
 
-def build_environment_arguments(
+PROTECTED_CONTAINER_VARS = {
+    "OPENCODE_CONFIG_DIR",
+    "OPENCODE_CONFIG",
+    "XDG_DATA_HOME",
+}
+
+
+def build_container_environment(
     config_file: Path | None,
     env_file: Path | None = None,
-) -> list[str]:
-    environment = {
+) -> dict[str, str]:
+    environment: dict[str, str] = {
         "OPENCODE_CONFIG_DIR": CONTAINER_CONFIG_DIR,
         "XDG_DATA_HOME": CONTAINER_DATA_HOME,
-        "WAYLAND_DISPLAY": os.getenv("WAYLAND_DISPLAY"),
-        "DISPLAY": os.getenv("DISPLAY"),
-        "XDG_RUNTIME_DIR": os.getenv("XDG_RUNTIME_DIR"),
-        "DBUS_SESSION_BUS_ADDRESS": os.getenv("DBUS_SESSION_BUS_ADDRESS"),
     }
+
+    gui_vars = (
+        "WAYLAND_DISPLAY",
+        "DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+    )
+    for var in gui_vars:
+        val = os.getenv(var)
+        if val is not None:
+            environment[var] = val
 
     if config_file is not None:
         environment["OPENCODE_CONFIG"] = f"{CONTAINER_CONFIG_DIR}/{config_file.name}"
@@ -460,19 +471,26 @@ def build_environment_arguments(
             environment[variable_name] = value
 
     if env_file is not None and env_file.is_file():
-        file_vars = dotenv_values(env_file)
-        for key in file_vars:
-            if key:
-                val = os.environ.get(key)
-                if val is not None:
-                    environment[key] = val
+        try:
+            file_vars = dotenv_values(env_file)
+        except (OSError, UnicodeDecodeError) as error:
+            print(
+                f"Warning: Failed to parse environment file {env_file}: {error}",
+                file=sys.stderr,
+            )
+            file_vars = {}
 
-    arguments: list[str] = []
-    for name, value in environment.items():
-        if value is not None:
-            arguments.extend(["--env", f"{name}={value}"])
+        for key, file_val in file_vars.items():
+            if not key or key in PROTECTED_CONTAINER_VARS:
+                continue
+            # Host shell environment takes precedence over .env file
+            val = os.environ.get(key)
+            if val is None and file_val is not None:
+                val = file_val
+            if val is not None:
+                environment[key] = val
 
-    return arguments
+    return environment
 
 
 def build_debug_command() -> list[str]:
@@ -545,10 +563,8 @@ def build_apptainer_command(
     project_dir: Path,
     config_dir: Path,
     data_dir: Path,
-    config_file: Path | None,
     opencode_args: list[str],
     debug_container: bool,
-    env_file: Path | None = None,
 ) -> list[str]:
     command = [
         "apptainer",
@@ -580,7 +596,6 @@ def build_apptainer_command(
         ]
     )
 
-    command.extend(build_environment_arguments(config_file, env_file=env_file))
     command.append(str(image_path))
 
     if debug_container:
@@ -597,10 +612,9 @@ def build_podman_command(
     project_dir: Path,
     config_dir: Path,
     data_dir: Path,
-    config_file: Path | None,
+    container_env: dict[str, str],
     opencode_args: list[str],
     debug_container: bool,
-    env_file: Path | None = None,
 ) -> list[str]:
     command = [
         "podman",
@@ -634,7 +648,12 @@ def build_podman_command(
     if x11_dir.exists():
         command.extend(["-v", f"{x11_dir}:{x11_dir}:rw"])
 
-    command.extend(build_environment_arguments(config_file, env_file=env_file))
+    for name, value in container_env.items():
+        if name in PROTECTED_CONTAINER_VARS:
+            command.extend(["--env", f"{name}={value}"])
+        else:
+            command.extend(["--env", name])
+
     command.extend(["--entrypoint", ""])
     command.append(image)
 
@@ -671,9 +690,6 @@ def main() -> int:
         print(f"Error: {error}", file=sys.stderr)
         return ExitCode.GENERAL_ERROR
 
-    if env_file is not None:
-        load_dotenv(dotenv_path=env_file, override=False)
-
     if shutil.which(args.engine) is None:
         print(
             f"Error: The '{args.engine}' executable was not found in PATH.",
@@ -690,7 +706,10 @@ def main() -> int:
             )
             return ExitCode.GENERAL_ERROR
     else:
-        if _looks_like_path(args.image) and not Path(args.image).exists():
+        if (
+            args.image.endswith((".tar", ".tar.gz", ".tar.bz2"))
+            or args.image.startswith(("./", "../", "/"))
+        ) and not Path(args.image).exists():
             print(
                 f"Error: Specified image file does not exist: {args.image}",
                 file=sys.stderr,
@@ -733,10 +752,13 @@ def main() -> int:
             default_config_path.write_text(
                 '{\n  "$schema": "https://opencode.ai/config.json"\n}'
             )
+        config_file = default_config_path
 
     if args.install_kai:
         ensure_directory(config_dir)
         install_kai(config_dir)
+
+    container_env = build_container_environment(config_file, env_file=env_file)
 
     print("==========================================================")
     print(f"OpenCode Container Sandbox ({args.engine.capitalize()})")
@@ -762,32 +784,38 @@ def main() -> int:
 
     print("==========================================================")
 
+    subprocess_env = os.environ.copy()
+
     if args.engine == "apptainer":
+        for name, value in container_env.items():
+            subprocess_env[f"APPTAINERENV_{name}"] = value
+            subprocess_env[f"SINGULARITYENV_{name}"] = value
         command = build_apptainer_command(
             image_path=resolve_path(args.image),
             project_dir=project_dir,
             config_dir=config_dir,
             data_dir=data_dir,
-            config_file=config_file,
             opencode_args=args.opencode_args,
             debug_container=args.debug_container,
-            env_file=env_file,
         )
     else:
+        for name, value in container_env.items():
+            if name not in PROTECTED_CONTAINER_VARS:
+                subprocess_env[name] = value
         command = build_podman_command(
             image=args.image,
             project_dir=project_dir,
             config_dir=config_dir,
             data_dir=data_dir,
-            config_file=config_file,
+            container_env=container_env,
             opencode_args=args.opencode_args,
             debug_container=args.debug_container,
-            env_file=env_file,
         )
 
     try:
         completed_process = subprocess.run(
             command,
+            env=subprocess_env,
             check=False,
         )
         return completed_process.returncode

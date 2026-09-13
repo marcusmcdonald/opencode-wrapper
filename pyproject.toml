@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "opencode-wrapper"
-version = "0.1.0"
+version = "1.1.0"
 description = "Run OpenCode inside an isolated Apptainer or Podman container"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +21,7 @@ opencode-build = "opencode_wrapper.build_image:main"
 [dependency-groups]
 dev = [
     "pre-commit>=4.6.0",
+    "pyright>=1.1.414",
     "ruff>=0.15.21",
 ]
 

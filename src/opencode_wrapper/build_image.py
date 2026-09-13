@@ -87,7 +87,9 @@ def parse_args() -> argparse.Namespace:
 def detect_engine(requested: str) -> str:
     if requested in ("apptainer", "podman"):
         if shutil.which(requested) is None:
-            sys.exit(f"Error: Requested engine '{requested}' is not installed or not in PATH.")
+            sys.exit(
+                f"Error: Requested engine '{requested}' is not installed or not in PATH."
+            )
         return requested
 
     if shutil.which("podman"):
@@ -99,12 +101,17 @@ def detect_engine(requested: str) -> str:
 
 
 def build_with_podman(dockerfile: Path, tag: str, no_cache: bool) -> int:
-    cmd = ["podman", "build", "-t", tag, "-f", str(dockerfile), str(dockerfile.parent)]
+    cmd = ["podman", "build", "-t", tag, "-f", str(dockerfile)]
     if no_cache:
         cmd.append("--no-cache")
+    cmd.append(str(dockerfile.parent))
 
     print(f"Building Podman image '{tag}' from {dockerfile}...")
-    return subprocess.run(cmd).returncode
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except KeyboardInterrupt:
+        print("\nBuild interrupted.", file=sys.stderr)
+        return 130
 
 
 def build_with_apptainer(dockerfile: Path, output_sif: Path, no_cache: bool) -> int:
@@ -117,6 +124,8 @@ def build_with_apptainer(dockerfile: Path, output_sif: Path, no_cache: bool) -> 
             "Install it via: uv pip install spython (or pip install spython)"
         )
 
+    output_sif.parent.mkdir(parents=True, exist_ok=True)
+
     print(f"Converting {dockerfile.name} to temporary Apptainer recipe...")
     parser = DockerParser(str(dockerfile))
     writer = SingularityWriter(parser.recipe)
@@ -126,14 +135,17 @@ def build_with_apptainer(dockerfile: Path, output_sif: Path, no_cache: bool) -> 
         tmp_def.write(def_content)
         tmp_def_path = Path(tmp_def.name)
 
-    cmd = ["apptainer", "build"]
+    cmd = ["apptainer", "build", "--force"]
     if no_cache:
         cmd.append("--disable-cache")
     cmd.extend([str(output_sif), str(tmp_def_path)])
 
     print(f"Building Apptainer SIF '{output_sif}'...")
     try:
-        return subprocess.run(cmd).returncode
+        return subprocess.run(cmd, check=False).returncode
+    except KeyboardInterrupt:
+        print("\nBuild interrupted.", file=sys.stderr)
+        return 130
     finally:
         tmp_def_path.unlink(missing_ok=True)
 
