@@ -111,7 +111,7 @@ def _create_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a .env file or directory containing a .env file. "
-            "Defaults to checking the project directory then the wrapper root."
+            "Defaults to checking the wrapper root then the project directory."
         ),
     )
 
@@ -370,13 +370,13 @@ def resolve_env_file(
             )
         return path
 
-    project_env = project_dir / ".env"
-    if project_env.is_file():
-        return project_env
-
     root_env = root_dir / ".env"
     if root_env.is_file():
         return root_env
+
+    project_env = project_dir / ".env"
+    if project_env.is_file():
+        return project_env
 
     return None
 

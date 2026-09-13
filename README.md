@@ -113,7 +113,7 @@ If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is
 
 ### Environment variables and `.env` files
 
-By default, the wrapper looks for a `.env` file in the target project directory, and if not found, falls back to checking the wrapper root directory. You can also specify an explicit file or directory using `--env-file`:
+By default, the wrapper looks for a `.env` file in the wrapper root directory, and if not found, falls back to checking the target project directory. You can also specify an explicit file or directory using `--env-file`:
 
 ```bash
 # Load from a specific .env file
