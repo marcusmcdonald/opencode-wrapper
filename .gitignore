@@ -221,3 +221,4 @@ __marimo__/
 *.sif
 *.simg
 /config/
+config/

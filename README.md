@@ -111,8 +111,23 @@ opencode --sandbox-config-dir /tmp/my-config --sandbox-data-dir /tmp/my-data
 
 If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is created before launching. API keys (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`) and Wayland/X11 environment are passed through from the host when present.
 
+### Environment variables and `.env` files
+
+By default, the wrapper looks for a `.env` file in the target project directory, and if not found, falls back to checking the wrapper root directory. You can also specify an explicit file or directory using `--env-file`:
+
+```bash
+# Load from a specific .env file
+opencode --env-file /path/to/custom.env
+
+# Load from a directory (assumes .env inside that directory)
+opencode --env-file /path/to/project-folder/
+```
+
+All variables defined in the `.env` file are forwarded into the container sandbox. If an environment variable is already set in the host shell environment, the host shell value takes precedence over the value in `.env`.
+
 ### Other options
 
+- `--env-file PATH` — path to a `.env` file or directory containing `.env`.
 - `--install-kai` — download and install the Kai multi-agent orchestration into the sandbox config directory.
 - `--debug-container` — print container identity, environment, mounts, and resolved OpenCode config, then exit.
 - `-v/--version` — show wrapper version and the OpenCode version from inside the container.

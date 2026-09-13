@@ -8,6 +8,8 @@ import sys
 from enum import IntEnum
 from pathlib import Path
 
+from dotenv import dotenv_values, load_dotenv
+
 WRAPPER_VERSION = "1.1.0"
 
 
@@ -102,6 +104,16 @@ def _create_parser() -> argparse.ArgumentParser:
         help=(
             "Host directory used to persist OpenCode data and authentication. "
             f"Default: {DEFAULT_HOST_DATA_DIR}"
+        ),
+    )
+
+    parser.add_argument(
+        "--env-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Path to a .env file or directory containing a .env file. "
+            "Defaults to checking the project directory then the wrapper root."
         ),
     )
 
@@ -326,6 +338,54 @@ def resolve_path(path_str: str) -> Path:
     return Path(path_str).expanduser().resolve()
 
 
+def resolve_env_file(
+    env_file_arg: str | None,
+    project_dir: Path,
+    root_dir: Path,
+) -> Path | None:
+    if env_file_arg is not None:
+        trimmed = env_file_arg.strip()
+        if not trimmed:
+            raise ValueError("Environment file path cannot be empty.")
+
+        path = resolve_path(trimmed)
+        if trimmed.endswith(("/", "\\")):
+            if not path.is_dir():
+                raise FileNotFoundError(
+                    f"Specified environment directory does not exist: {path}"
+                )
+            candidate = path / ".env"
+            if not candidate.is_file():
+                raise FileNotFoundError(
+                    f"Specified environment file does not exist: {candidate}"
+                )
+            return candidate
+
+        if path.is_dir():
+            candidate = path / ".env"
+            if not candidate.is_file():
+                raise FileNotFoundError(
+                    f"Specified environment file does not exist: {candidate}"
+                )
+            return candidate
+
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Specified environment file does not exist: {path}"
+            )
+        return path
+
+    project_env = project_dir / ".env"
+    if project_env.is_file():
+        return project_env
+
+    root_env = root_dir / ".env"
+    if root_env.is_file():
+        return root_env
+
+    return None
+
+
 def reset_directory(path: Path) -> None:
     if path.exists():
         if path.is_dir():
@@ -369,7 +429,10 @@ def find_config_file(config_dir: Path) -> Path | None:
     return None
 
 
-def build_environment_arguments(config_file: Path | None) -> list[str]:
+def build_environment_arguments(
+    config_file: Path | None,
+    env_file: Path | None = None,
+) -> list[str]:
     environment = {
         "OPENCODE_CONFIG_DIR": CONTAINER_CONFIG_DIR,
         "XDG_DATA_HOME": CONTAINER_DATA_HOME,
@@ -395,6 +458,14 @@ def build_environment_arguments(config_file: Path | None) -> list[str]:
         value = os.environ.get(variable_name)
         if value:
             environment[variable_name] = value
+
+    if env_file is not None and env_file.is_file():
+        file_vars = dotenv_values(env_file)
+        for key in file_vars:
+            if key:
+                val = os.environ.get(key)
+                if val is not None:
+                    environment[key] = val
 
     arguments: list[str] = []
     for name, value in environment.items():
@@ -477,6 +548,7 @@ def build_apptainer_command(
     config_file: Path | None,
     opencode_args: list[str],
     debug_container: bool,
+    env_file: Path | None = None,
 ) -> list[str]:
     command = [
         "apptainer",
@@ -508,7 +580,7 @@ def build_apptainer_command(
         ]
     )
 
-    command.extend(build_environment_arguments(config_file))
+    command.extend(build_environment_arguments(config_file, env_file=env_file))
     command.append(str(image_path))
 
     if debug_container:
@@ -528,6 +600,7 @@ def build_podman_command(
     config_file: Path | None,
     opencode_args: list[str],
     debug_container: bool,
+    env_file: Path | None = None,
 ) -> list[str]:
     command = [
         "podman",
@@ -561,7 +634,7 @@ def build_podman_command(
     if x11_dir.exists():
         command.extend(["-v", f"{x11_dir}:{x11_dir}:rw"])
 
-    command.extend(build_environment_arguments(config_file))
+    command.extend(build_environment_arguments(config_file, env_file=env_file))
     command.extend(["--entrypoint", ""])
     command.append(image)
 
@@ -587,6 +660,19 @@ def main() -> int:
             file=sys.stderr,
         )
         return ExitCode.GENERAL_ERROR
+
+    try:
+        env_file = resolve_env_file(
+            args.env_file,
+            project_dir=project_dir,
+            root_dir=_ROOT_DIR,
+        )
+    except (FileNotFoundError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return ExitCode.GENERAL_ERROR
+
+    if env_file is not None:
+        load_dotenv(dotenv_path=env_file, override=False)
 
     if shutil.which(args.engine) is None:
         print(
@@ -660,6 +746,10 @@ def main() -> int:
     print(f"Project:            {project_dir}")
     print(f"Configuration:      {config_dir}")
     print(f"Persistent data:    {data_dir}")
+    if env_file is not None:
+        print(f"Environment file:   {env_file}")
+    else:
+        print("Environment file:   none")
 
     if config_file is not None:
         print(f"Primary config:     {config_file}")
@@ -681,6 +771,7 @@ def main() -> int:
             config_file=config_file,
             opencode_args=args.opencode_args,
             debug_container=args.debug_container,
+            env_file=env_file,
         )
     else:
         command = build_podman_command(
@@ -691,6 +782,7 @@ def main() -> int:
             config_file=config_file,
             opencode_args=args.opencode_args,
             debug_container=args.debug_container,
+            env_file=env_file,
         )
 
     try:
