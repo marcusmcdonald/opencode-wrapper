@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 from dotenv import dotenv_values
 
@@ -174,9 +177,100 @@ def _create_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_string = False
+    escape = False
+
+    while i < n:
+        c = text[i]
+
+        if in_string:
+            out.append(c)
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if c == '"':
+            in_string = True
+            out.append(c)
+            i += 1
+            continue
+
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i += 2
+            while i < n and text[i] not in ("\r", "\n"):
+                i += 1
+            continue
+
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, n)
+            continue
+
+        out.append(c)
+        i += 1
+
+    stripped = "".join(out)
+    return re.sub(r",\s*([\]}])", r"\1", stripped)
+
+
+def configure_kai_agent(config_path: Path) -> None:
+    data: dict[str, Any] = {}
+    if config_path.is_file():
+        try:
+            content = config_path.read_text(encoding="utf-8")
+            parsed = json.loads(_strip_jsonc_comments(content))
+            if isinstance(parsed, dict):
+                data = parsed
+        except (json.JSONDecodeError, OSError) as error:
+            print(
+                f"Warning: Could not parse {config_path.name} ({error}). Initializing new configuration.",
+                file=sys.stderr,
+            )
+            data = {}
+
+    data["default_agent"] = "kai"
+
+    agents = data.get("agents")
+    if not isinstance(agents, dict):
+        agents = {}
+        data["agents"] = agents
+
+    for agent_name in ("build", "plan"):
+        agent_conf = agents.get(agent_name)
+        if not isinstance(agent_conf, dict):
+            agent_conf = {}
+            agents[agent_name] = agent_conf
+        agent_conf["disabled"] = True
+
+    try:
+        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        print(
+            f"Configured Kai as default agent and disabled build/plan in {config_path.name}"
+        )
+    except OSError as error:
+        print(
+            f"Warning: Failed to write Kai configuration to {config_path}: {error}",
+            file=sys.stderr,
+        )
+
+
 def install_kai(target_config_dir: Path) -> None:
     installer_url = "https://kai.21no.de/scripts/installer.sh"
     print(f"Downloading and installing Kai into {target_config_dir}...")
+
+    had_json = (target_config_dir / "opencode.json").is_file()
+    had_jsonc = (target_config_dir / "opencode.jsonc").is_file()
 
     cmd = [
         "bash",
@@ -189,6 +283,20 @@ def install_kai(target_config_dir: Path) -> None:
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
         print("Warning: Kai installer failed or curl was unavailable.", file=sys.stderr)
+
+    if not had_json and had_jsonc:
+        created_json = target_config_dir / "opencode.json"
+        if created_json.is_file():
+            created_json.unlink(missing_ok=True)
+        target_config = target_config_dir / "opencode.jsonc"
+    elif had_json:
+        target_config = target_config_dir / "opencode.json"
+    elif had_jsonc:
+        target_config = target_config_dir / "opencode.jsonc"
+    else:
+        target_config = target_config_dir / "opencode.json"
+
+    configure_kai_agent(target_config)
 
 
 def detect_engine(engine_arg: str, image_arg: str | None) -> str:
@@ -757,6 +865,7 @@ def main() -> int:
     if args.install_kai:
         ensure_directory(config_dir)
         install_kai(config_dir)
+        config_file = find_config_file(config_dir) or config_file
 
     container_env = build_container_environment(config_file, env_file=env_file)
 
