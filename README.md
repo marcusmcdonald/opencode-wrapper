@@ -41,7 +41,7 @@ Because each sandbox keeps its configuration and data in an isolated host direct
 - Python 3.12+
 - Astral `uv`
 - **Apptainer** and/or **Podman** installed and in `PATH`
-- `spython` for Apptainer builds from Dockerfiles (automatically installed as a dependency)
+- `python-dotenv` and `spython` (automatically installed as dependencies)
 
 ## Building the image
 
@@ -66,7 +66,7 @@ opencode-build --no-cache
 
 Available options: `-e/--engine {auto,apptainer,podman}`, `-f/--file` (Dockerfile path, default bundled `Dockerfile`), `-o/--output` (`.sif` path for Apptainer, image tag for Podman), `--no-cache`.
 
-Default outputs: `opencode.sif` (Apptainer) or `opencode:latest` (Podman tag).
+Default outputs: `~/.local/share/opencode-wrapper/opencode.sif` (Apptainer) or `opencode:latest` (Podman tag).
 
 ## Running OpenCode
 
@@ -89,11 +89,11 @@ opencode --image ./opencode.sif
 opencode --image opencode:latest
 ```
 
-The engine is auto-detected: a `.sif`/`.simg` image (or any file path) selects Apptainer; an image tag selects Podman; otherwise the default image for the detected runtime is used.
+The engine is auto-detected: a `.sif`/`.simg` image (or any file path) selects Apptainer; an image tag selects Podman; otherwise the default image for the detected runtime is used (e.g. `~/.local/share/opencode-wrapper/opencode.sif` for Apptainer).
 
 ### Configuration and data management
 
-Config and data live by default in `./config/opencode` and `./config/.local/share/opencode` relative to this project.
+Config and data live by default in `~/.local/share/opencode-wrapper/config/opencode` and `~/.local/share/opencode-wrapper/data/opencode` (overrideable with `--sandbox-config-dir` / `--sandbox-data-dir` or `$OPENCODE_WRAPPER_ROOT`).
 
 ```bash
 # Copy an existing config file/dir into the sandbox before launching
@@ -113,7 +113,7 @@ If no `opencode.json`/`opencode.jsonc` exists in the config dir, an empty one is
 
 ### Environment variables and `.env` files
 
-By default, the wrapper looks for a `.env` file in the wrapper root directory, and if not found, falls back to checking the target project directory. You can also specify an explicit file or directory using `--env-file`:
+By default, the wrapper looks for a `.env` file in `~/.local/share/opencode-wrapper/.env` first, and if not found, falls back to checking the target project directory. You can also specify an explicit file or directory using `--env-file`:
 
 ```bash
 # Load from a specific .env file
@@ -123,12 +123,14 @@ opencode --env-file /path/to/custom.env
 opencode --env-file /path/to/project-folder/
 ```
 
-All variables defined in the `.env` file are forwarded into the container sandbox. If an environment variable is already set in the host shell environment, the host shell value takes precedence over the value in `.env`.
+All variables defined in the `.env` file are forwarded into the container sandbox (internal container paths like `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG`, and `XDG_DATA_HOME` are protected). If an environment variable is already set in the host shell environment, the host shell value takes precedence over the value in `.env`. Sensitive variables are passed securely without exposing secret values on the host command line (`/proc/<pid>/cmdline`).
 
 ### Other options
 
-- `--env-file PATH` — path to a `.env` file or directory containing `.env`.
-- `--install-kai` — download and install the Kai multi-agent orchestration into the sandbox config directory.
+- `--env-file PATH` — path to a `.env` file or directory containing `.env`. Defaults to checking `~/.local/share/opencode-wrapper/.env` then the project directory.
+- `--sandbox-config-dir PATH` — host directory used to persist OpenCode configuration (default: `~/.local/share/opencode-wrapper/config/opencode`).
+- `--sandbox-data-dir PATH` — host directory used to persist OpenCode data and authentication (default: `~/.local/share/opencode-wrapper/data/opencode`).
+- `--install-kai` — download and install Kai multi-agent orchestration into the sandbox configuration directory, configuring `kai` as the default agent and disabling `build` and `plan`.
 - `--debug-container` — print container identity, environment, mounts, and resolved OpenCode config, then exit.
 - `-v/--version` — show wrapper version and the OpenCode version from inside the container.
 - `-h/--help` — show wrapper help plus OpenCode's own `--help` from inside the container.
@@ -138,7 +140,7 @@ All variables defined in the `.env` file are forwarded into the container sandbo
 Install development dependencies:
 
 ```bash
-uv sync --group dev   # installs ruff and pre-commit
+uv sync --group dev   # installs ruff, pre-commit, and pyright
 ```
 
 ### Pre-commit hooks
@@ -162,6 +164,12 @@ uv run pre-commit run --all-files
 ```bash
 uv run ruff check     # check for lint errors
 uv run ruff format    # check / apply formatting
+```
+
+### Type Checking
+
+```bash
+uv run pyright        # run static type checking
 ```
 
 ## License

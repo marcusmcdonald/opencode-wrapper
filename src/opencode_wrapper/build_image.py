@@ -9,14 +9,10 @@ import tempfile
 from pathlib import Path
 
 
-def _find_repo_or_data_root() -> Path:
+def _find_data_root() -> Path:
     env_dir = os.environ.get("OPENCODE_WRAPPER_ROOT")
     if env_dir:
         return Path(env_dir).expanduser().resolve()
-
-    repo_candidate = Path(__file__).resolve().parents[2]
-    if (repo_candidate / "pyproject.toml").is_file():
-        return repo_candidate
 
     return Path.home() / ".local" / "share" / "opencode-wrapper"
 
@@ -26,10 +22,13 @@ def _find_default_dockerfile() -> Path:
     if pkg_df.is_file():
         return pkg_df
 
-    repo_root = _find_repo_or_data_root()
-    repo_df = repo_root / "Dockerfile"
-    if repo_df.is_file():
-        return repo_df
+    repo_candidate = Path(__file__).resolve().parents[2] / "Dockerfile"
+    if repo_candidate.is_file():
+        return repo_candidate
+
+    data_df = _find_data_root() / "Dockerfile"
+    if data_df.is_file():
+        return data_df
 
     cwd_df = Path.cwd() / "Dockerfile"
     if cwd_df.is_file():
@@ -39,12 +38,10 @@ def _find_default_dockerfile() -> Path:
 
 
 def _find_default_sif_path() -> Path:
-    repo_root = _find_repo_or_data_root()
-    if (repo_root / "pyproject.toml").is_file():
-        return repo_root / "opencode.sif"
-    return Path.cwd() / "opencode.sif"
+    return _find_data_root() / "opencode.sif"
 
 
+_DATA_ROOT = _find_data_root()
 DEFAULT_DOCKERFILE = _find_default_dockerfile()
 DEFAULT_SIF_PATH = _find_default_sif_path()
 DEFAULT_PODMAN_TAG = "opencode:latest"
@@ -72,8 +69,8 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default=None,
         help=(
-            "Output target. For Apptainer: path to output .sif (default: opencode.sif). "
-            "For Podman: image tag (default: opencode:latest)."
+            f"Output target. For Apptainer: path to output .sif (default: {DEFAULT_SIF_PATH}). "
+            f"For Podman: image tag (default: {DEFAULT_PODMAN_TAG})."
         ),
     )
     parser.add_argument(

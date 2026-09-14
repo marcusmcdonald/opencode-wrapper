@@ -16,15 +16,10 @@ from dotenv import dotenv_values
 WRAPPER_VERSION = "1.1.0"
 
 
-def _find_repo_or_data_root() -> Path:
+def _find_data_root() -> Path:
     env_dir = os.environ.get("OPENCODE_WRAPPER_ROOT")
     if env_dir:
         return Path(env_dir).expanduser().resolve()
-
-    # If installed in editable mode or running from git checkout
-    repo_candidate = Path(__file__).resolve().parents[2]
-    if (repo_candidate / "pyproject.toml").is_file():
-        return repo_candidate
 
     return Path.home() / ".local" / "share" / "opencode-wrapper"
 
@@ -34,24 +29,35 @@ def _find_default_apptainer_image() -> Path:
     if cwd_sif.is_file():
         return cwd_sif
 
-    repo_root = _find_repo_or_data_root()
-    repo_sif = repo_root / "opencode.sif"
-    if repo_sif.is_file():
-        return repo_sif
+    data_root = _find_data_root()
+    data_sif = data_root / "opencode.sif"
+    if data_sif.is_file():
+        return data_sif
+
+    repo_candidate = Path(__file__).resolve().parents[2] / "opencode.sif"
+    if repo_candidate.is_file():
+        return repo_candidate
 
     pkg_sif = Path(__file__).resolve().parent / "opencode.sif"
     if pkg_sif.is_file():
         return pkg_sif
 
-    return repo_sif
+    return data_sif
 
 
-_ROOT_DIR = _find_repo_or_data_root()
+def _find_default_data_dir(data_root: Path) -> Path:
+    legacy_data_dir = data_root / "config" / ".local" / "share" / "opencode"
+    if legacy_data_dir.is_dir():
+        return legacy_data_dir
+    return data_root / "data" / "opencode"
+
+
+_DATA_ROOT = _find_data_root()
 DEFAULT_APPTAINER_IMAGE = _find_default_apptainer_image()
 DEFAULT_PODMAN_IMAGE = "opencode:latest"
 
-DEFAULT_HOST_CONFIG_DIR = _ROOT_DIR / "config" / "opencode"
-DEFAULT_HOST_DATA_DIR = _ROOT_DIR / "config" / ".local" / "share" / "opencode"
+DEFAULT_HOST_CONFIG_DIR = _DATA_ROOT / "config" / "opencode"
+DEFAULT_HOST_DATA_DIR = _find_default_data_dir(_DATA_ROOT)
 
 CONTAINER_PROJECT_DIR = "/workspace/project"
 CONTAINER_CONFIG_DIR = "/workspace/opencode-config"
@@ -85,7 +91,7 @@ def _create_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to SIF file (Apptainer) or image tag/archive (Podman). "
-            f"Defaults: '{DEFAULT_APPTAINER_IMAGE.name}' (Apptainer), "
+            f"Defaults: '{DEFAULT_APPTAINER_IMAGE}' (Apptainer), "
             f"'{DEFAULT_PODMAN_IMAGE}' (Podman)."
         ),
     )
@@ -114,7 +120,7 @@ def _create_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a .env file or directory containing a .env file. "
-            "Defaults to checking the wrapper root then the project directory."
+            f"Defaults to checking {_DATA_ROOT / '.env'} then the project directory."
         ),
     )
 
@@ -451,7 +457,7 @@ def resolve_path(path_str: str) -> Path:
 def resolve_env_file(
     env_file_arg: str | None,
     project_dir: Path,
-    root_dir: Path,
+    data_root: Path,
 ) -> Path | None:
     if env_file_arg is not None:
         trimmed = env_file_arg.strip()
@@ -478,7 +484,7 @@ def resolve_env_file(
             )
         return path
 
-    root_env = root_dir / ".env"
+    root_env = data_root / ".env"
     if root_env.is_file():
         return root_env
 
@@ -792,7 +798,7 @@ def main() -> int:
         env_file = resolve_env_file(
             args.env_file,
             project_dir=project_dir,
-            root_dir=_ROOT_DIR,
+            data_root=_DATA_ROOT,
         )
     except (FileNotFoundError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
